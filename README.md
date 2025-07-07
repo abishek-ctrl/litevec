@@ -1,6 +1,6 @@
 Markdown
 
-# 🧠 Vector Database
+# 🧠 MiniVec - Vector Database
 
 This project is a  **vector database engine** built entirely from scratch — without relying on any third-party vector DB like FAISS, Pinecone, or Chroma. It offers real **semantic search** using transformer-based embeddings, efficient vector indexing (brute-force or ANN), and exposes a clean **REST API** for integration.
 
