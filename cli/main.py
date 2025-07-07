@@ -26,6 +26,16 @@ def load(path: str):
     store.load(path)
     print(f"[✓] Loaded index from {path}")
 
+def upsert(id: str, text: str):
+    vec = embedder.encode([text])[0]
+    store.upsert(id, vec, {"text": text})
+    print(f"[+] Upserted '{id}'")
+
+def delete(ids: List[str], filter: Dict[str, str]):
+    store.delete(ids=ids, filter=filter)
+    print(f"[✓] Deleted items matching IDs or filter")
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")
@@ -41,6 +51,14 @@ def main():
     search_parser.add_argument("text")
     search_parser.add_argument("--k", type=int, default=5)
 
+    delete_parser = subparsers.add_parser("delete")
+    delete_parser.add_argument("--ids", nargs='*', default=[])
+    delete_parser.add_argument("--filter", nargs='*', help="key=value filters", default=[])
+
+    upsert_parser = subparsers.add_parser("upsert")
+    upsert_parser.add_argument("id")
+    upsert_parser.add_argument("text")
+
     args = parser.parse_args()
 
     if args.command == "insert":
@@ -51,6 +69,11 @@ def main():
         save(args.path)
     elif args.command == "load":
         load(args.path)
+    elif args.command == "delete":
+        filters = dict(f.split("=", 1) for f in args.filter)
+        delete(ids=args.ids, filter=filters)
+    elif args.command == "upsert":
+        upsert(args.id, args.text)
     else:
         parser.print_help()
 

@@ -3,17 +3,27 @@ import numpy as np
 from typing import List, Tuple, Dict, Any
 
 class BaseVectorStore(ABC):
-    @abstractmethod
-    def add(self, vector_id: str, vector: np.ndarray, metadata: Dict[str, Any]): ...
 
     @abstractmethod
-    def add_many(self, vector_ids: List[str], vectors: List[np.ndarray], metadata: List[Dict[str, Any]]): ...
+    def add(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]):
+        pass
 
     @abstractmethod
-    def search(self, query: np.ndarray, k: int, filters: Dict[str, Any] = None) -> List[Tuple[str, float, Dict[str, Any]]]: ...
+    def upsert(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]):
+        pass
 
     @abstractmethod
-    def save(self, path: str): ...
+    def delete(self, ids: List[str] = None, filter: Dict[str, Any] = None):
+        pass
 
     @abstractmethod
-    def load(self, path: str): ...
+    def search(self, vector: np.ndarray, k: int) -> List[Tuple[str, float, Dict[str, Any]]]:
+        pass
+
+    @abstractmethod
+    def save(self, path: str):
+        pass
+
+    @abstractmethod
+    def load(self, path: str):
+        pass
