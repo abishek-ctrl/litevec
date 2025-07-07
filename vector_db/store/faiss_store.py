@@ -31,17 +31,8 @@ class FaissVectorStore(BaseVectorStore):
     def save(self, path: str):
         os.makedirs(path, exist_ok=True)
         faiss.write_index(self.index, os.path.join(path, "index.faiss"))
-        with open(os.path.join(path, "meta.json"), "w") as f:
-            json.dump({
-                "ids": self.ids,
-                "metadata": self.metadata,
-                "dim": self.dim
-            }, f)
+        save_faiss_metadata(path, self.ids, self.metadata, self.dim)
 
     def load(self, path: str):
         self.index = faiss.read_index(os.path.join(path, "index.faiss"))
-        with open(os.path.join(path, "meta.json")) as f:
-            meta = json.load(f)
-        self.ids = meta["ids"]
-        self.metadata = meta["metadata"]
-        self.dim = meta["dim"]
+        self.ids, self.metadata, self.dim = load_faiss_metadata(path)
