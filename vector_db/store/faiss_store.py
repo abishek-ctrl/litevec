@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pickle
 from typing import List, Tuple, Dict, Any
-from vector_db.base import BaseVectorStore
+from vector_db.store.base import BaseVectorStore
 
 class FaissVectorStore(BaseVectorStore):
     def __init__(self, dim: int):
@@ -51,18 +51,32 @@ class FaissVectorStore(BaseVectorStore):
         self.vectors = keep_vectors
         self.metadata = {id: self.metadata[id] for id in keep_ids}
 
-    def search(self, vector: np.ndarray, k: int) -> List[Tuple[str, float, Dict[str, Any]]]:
+    def search(self, vector: np.ndarray, k: int, filter: Dict[str, Any] = None) -> List[Tuple[str, float, Dict[str, Any]]]:
         if not self.ids:
             return []
 
         vector = vector.reshape(1, -1)
-        scores, indices = self.index.search(vector, k)
+        max_k = min(k * 2, len(self.ids))
+        scores, indices = self.index.search(vector, max_k)
+
         results = []
-        for idx in indices[0]:
-            if idx >= len(self.ids):
+        count = 0
+        for j in range(max_k):
+            i = indices[0][j]
+            if i < 0 or i >= len(self.ids):
                 continue
-            id = self.ids[idx]
-            results.append((id, float(scores[0][idx]), self.metadata[id]))
+
+            id = self.ids[i]
+            meta = self.metadata[id]
+
+            if filter and not all(meta.get(k) == v for k, v in filter.items()):
+                continue
+
+            results.append((id, float(scores[0][j]), meta))
+            count += 1
+            if count == k:
+                break
+
         return results
 
     def save(self, path: str):
@@ -76,3 +90,7 @@ class FaissVectorStore(BaseVectorStore):
         with open(os.path.join(path, "meta.pkl"), "rb") as f:
             self.ids, self.vectors, self.metadata = pickle.load(f)
         self.dim = self.vectors[0].shape[0] if self.vectors else self.dim
+
+    def _validate_vector(self, vector: np.ndarray):
+        if vector.shape != (self.dim,):
+            raise ValueError(f"Expected vector shape ({self.dim},), got {vector.shape}")

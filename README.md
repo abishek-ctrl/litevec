@@ -1,60 +1,151 @@
-Markdown
-
-# 🧠 MiniVec - Vector Database
-
-This project is a  **vector database engine** built entirely from scratch — without relying on any third-party vector DB like FAISS, Pinecone, or Chroma. It offers real **semantic search** using transformer-based embeddings, efficient vector indexing (brute-force or ANN), and exposes a clean **REST API** for integration.
-
-> ✅ Built as an original end-to-end project to demonstrate vector search engineering, architecture, and applied ML skills.
+# LiteVec: A Minimal, Extensible Vector Database
 
 ---
 
-## 🚀 Features
+## Overview
 
-| Component            | Description                                                                 |
-|----------------------|-----------------------------------------------------------------------------|
-| **Custom Vector Store** | In-memory + optional FAISS-based ANN backend                             |
-| **Sentence Embeddings** | Uses `sentence-transformers` (`MiniLM-L6`) for high-quality embeddings  |
-| **Cosine Similarity Search** | Both brute-force and ANN via normalized inner product               |
-| **Full Metadata Support** | Store and retrieve associated metadata for every document              |
-| **Persistence** | Save/load vectors + metadata from JSON                                    |
-| **REST API** | Built using FastAPI for `/insert` and `/search` endpoints                  |
-| **Modular Design** | Swap out storage/index/encoder layers with ease                           |
+**LiteVec** is a lightweight, local vector database implementation designed for semantic search and similarity retrieval of high-dimensional vector embeddings. It provides a robust and modular foundation for storing, indexing, searching, and persisting vector data with associated metadata — all built on top of the FAISS indexing library and Hugging Face embeddings.
+
+This is just a simple implementation of vectordbs that I worked on to get more indepth on similar databases and building them. 
 
 ---
 
+## Features
 
-## 📊 Updates
+- **Efficient Vector Indexing:** Uses Facebook AI Similarity Search (FAISS) for fast approximate nearest neighbor search.
+- **Pluggable Embedding Models:** Built-in support for Hugging Face SentenceTransformer models; easily extendable.
+- **Metadata Support:** Attach custom metadata to vectors and filter search results based on it.
+- **Persistence:** Save and load the vector index and metadata to/from disk.
+- **Insertion & Deletion:** Add new vectors with unique IDs and remove vectors logically.
+- **Command-Line Interface:** Simple CLI tool to insert, search, save, and load vector data.
 
-### Phase 1 Release - July 06, 2025
+---
 
-**Description:**
-Implemented the foundational in-memory vector database with real semantic embeddings and a command-line interface (CLI) for basic insert and search operations. Focused on establishing the core concept and modular structure.
+## Installation
 
-**Results (Demo):**
-The demo script execution showcased the performance characteristics of initial setup, document ingestion, and query processing.
+1. Clone the repository:
 
-Initialization complete in 25.3287 seconds.
+    ```
+    git clone https://github.com/yourusername/vector-db.git
+    cd vector-db
+    ```
 
-Processing query: 'Tell me about machine learning'
-Query embedding took 0.0211 seconds.
-Searching for top 3 matches in the store...
-Search operation took 0.0064 seconds.
+2. (Recommended) Create and activate a Python virtual environment:
 
-Top Results:
+    ```
+    python -m venv venv
+    source venv/bin/activate
+    # On Windows: 
+    venv\Scripts\activate
+    ```
 
-ai2 — score: 0.4732
+3. Install dependencies:
 
-ai1 — score: 0.4276
+    ```
+    pip install -r requirements.txt
+    ```
 
-life2 — score: 0.0863
+Dependencies include:
+- faiss-cpu
+- sentence-transformers
+- numpy
+- PyPDF2
+- argparse
 
-*Note: The initial "Initialization" time (e.g., 25.3287 seconds) often includes the first-time download and loading of the `sentence-transformers` model. Subsequent runs will typically see much faster initialization if the model is cached.*
+---
 
-## 🔧 Built With
+## Usage
 
-* **Sentence-Transformers** – Embedding model (`MiniLM-L6-v2`)
-* **FAISS (optional)** – High-speed Approximate Nearest Neighbor (ANN) engine
-* **FastAPI** – Modern, fast (high-performance) web framework for building APIs
-* **numpy**, **scikit-learn** – Essential libraries for efficient vector mathematics and cosine similarity calculations
+### CLI Tool
 
-*Note: While FAISS is used optionally to speed up search, the core database infrastructure and i
+The CLI tool supports basic vector database operations:
+
+```
+python -m vector_db.cli.main insert <id> "<text>"
+python -m vector_db.cli.main search "<query_text>" --k 5
+python -m vector_db.cli.main save <path>
+python -m vector_db.cli.main load <path>
+```
+
+### Python API Example
+
+```python
+from vector_db.embedder import Embedder
+from vector_db.store.faiss_store import FaissVectorStore
+
+# Initialize embedder and store
+embedder = Embedder()
+store = FaissVectorStore(dim=embedder.dim)
+
+# Insert data
+text = "Machine learning enables computers to learn from data."
+vec = embedder.encode([text])[0]
+store.add("doc1", vec, {"source": "example"})
+
+# Search
+query = "What is machine learning?"
+qvec = embedder.encode([query])[0]
+results = store.search(qvec, k=3)
+print(results)
+```
+
+### Example: PDF Semantic Search
+The examples/pdf_search.py script demonstrates ingesting a PDF resume, chunking text, indexing embeddings, and querying semantic search.
+
+Run:
+```
+python examples/pdf_search.py
+```
+
+Follow the prompt to enter queries.
+
+
+---
+
+## Comparison with Other Vector Databases
+
+| Feature          | Vector-DB | FAISS | Qdrant | Weaviate | Chroma |
+|------------------|-----------|-------|--------|----------|--------|
+| Backend Index    | FAISS     | FAISS | HNSW   | HNSW     | FAISS  |
+| Metadata Support | Yes       | No    | Yes    | Yes      | Yes    |
+| Persistence      | Yes       | Partial | Yes  | Yes      | Yes    |
+| Embedding Support| Built-in  | N/A   | Yes    | Yes      | Yes    |
+| CLI Interface    | Yes       | No    | No     | No       | No     |
+| Local Deployment | Yes       | Yes   | Yes    | Yes      | Yes    |
+| Cloud Support    | No        | No    | Yes    | Yes      | Yes    |
+
+---
+
+---
+
+## Getting Started Guide
+
+1. **Installation**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Basic Usage**:
+
+```python
+from vector_db import FaissVectorStore, Embedder
+
+# Initialize components
+embedder = Embedder()
+store = FaissVectorStore(dim=embedder.dim)
+
+# Add some data
+store.add("doc1", embedder.encode("Sample text")[0], {"type": "example"})
+
+# Search
+results = store.search(embedder.encode("Search query")[0], k=3)
+```
+3. **Working with Documents**:
+
+```python
+from utils.pdf_loader import load_and_chunk_pdf
+
+# Load PDF and process
+chunks = load_and_chunk_pdf("document.pdf", chunk_size=500)
+for i, chunk in enumerate(chunks):
+    store.add(f"chunk_{i}", embedder.encode(chunk)[0], {"source": "document.pdf"})
+```

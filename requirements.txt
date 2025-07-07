@@ -1,3 +1,5 @@
-# Add your Python dependencies here, e.g.,
-# numpy
-# faiss-cpu
+numpy
+faiss-cpu
+pymupdf
+scikit-learn
+sentence-transformers
