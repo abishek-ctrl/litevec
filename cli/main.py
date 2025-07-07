@@ -2,7 +2,8 @@ import argparse
 from vector_db.embedder import Embedder
 from vector_db.store.faiss_store import FaissVectorStore
 
-store = FaissVectorStore()
+DIM = 384
+store = FaissVectorStore(dim=DIM)
 embedder = Embedder()
 
 def insert(id: str, text: str):

@@ -1,0 +1,16 @@
+[project]
+name = "vector-db"
+version = "0.1.0"
+description = "Vector Database Implementation with ANN and metadata filtering"
+authors = [{name = "Abishek M"}]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "faiss-cpu",
+    "sentence-transformers"
+]
+
+[project.scripts]
+vector-db = "vector_db.cli.main:main"
