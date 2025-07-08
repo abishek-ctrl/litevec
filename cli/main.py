@@ -3,19 +3,22 @@ import sys
 from vector_db.embedder import Embedder
 from vector_db.store.faiss_store import FaissVectorStore
 from vector_db.store.hnsw_store import HNSWVectorStore
+from vector_db.store.annoy_store import AnnoyVectorStore
 
 def get_store(backend: str, dim: int):
     if backend == "faiss":
         return FaissVectorStore(dim=dim)
     elif backend == "hnsw":
         return HNSWVectorStore(dim=dim)
+    elif backend == "annoy":
+        return AnnoyVectorStore(dim=dim)
     else:
         raise ValueError(f"Unknown backend '{backend}'")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, default="faiss",
-                        choices=["faiss", "hnsw"], help="Index backend")
+                        choices=["faiss", "hnsw", "annoy"], help="Index backend")
     parser.add_argument("--dim", type=int, default=None,
                         help="Embedding dimension (required if not loading)")
     subparsers = parser.add_subparsers(dest="command")
@@ -48,7 +51,6 @@ def main():
     dim = args.dim or embedder.dim
     store = get_store(args.backend, dim)
 
-    # loading existing index
     if args.command in ["load", "search", "insert", "upsert", "delete"]:
         try:
             store.load("data")
@@ -77,7 +79,6 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # always persisting after mutating operations
     if args.command in ["insert", "upsert", "delete"]:
         store.save("data")
 
