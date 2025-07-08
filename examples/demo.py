@@ -11,6 +11,7 @@ docs = {
     "doc4": "Neural networks are a kind of machine learning model.",
 }
 
+
 for doc_id, text in docs.items():
     store.add(doc_id, embedder.encode(text), text)
 
