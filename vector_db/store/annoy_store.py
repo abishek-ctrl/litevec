@@ -6,35 +6,39 @@ from annoy import AnnoyIndex
 from vector_db.store.base import BaseVectorStore
 
 class AnnoyVectorStore(BaseVectorStore):
-    def __init__(
-        self,
-        dim: int,
-        metric: str = 'angular',
-        n_trees: int = 10
-    ):
-        """
-        Annoy-based vector store.
-
-        Args:
-            dim: Embedding dimensionality.
-            metric: 'angular', 'euclidean', 'manhattan', etc.
-            n_trees: Number of trees for the index (trade-off speed/accuracy).
-        """
+    def __init__(self, dim: int, metric: str = 'angular', n_trees: int = 10):
         self.dim = dim
-        self.index = AnnoyIndex(dim, metric)
+        self.metric = metric
         self.n_trees = n_trees
+        self.index = AnnoyIndex(dim, metric)
         self.ids: List[str] = []
-        self.metadata: Dict[str, Any] = {}
+        self.metadata: Dict[str, Dict[str, Any]] = {}
+        self._built = False
 
-    def add(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]):
+    def _validate_vector(self, vector):
+        # Accept np.ndarray or list
+        if isinstance(vector, np.ndarray):
+            if vector.shape != (self.dim,):
+                raise ValueError(f"Expected vector shape ({self.dim},), got {vector.shape}")
+            return vector.tolist()
+        elif isinstance(vector, list):
+            if len(vector) != self.dim:
+                raise ValueError(f"Expected vector length {self.dim}, got {len(vector)}")
+            return vector
+        else:
+            raise TypeError("Vector must be a list or numpy.ndarray")
+
+    def add(self, id: str, vector, metadata: Dict[str, Any]):
         if id in self.ids:
             raise ValueError(f"ID '{id}' exists; use upsert() to overwrite.")
+        vec_list = self._validate_vector(vector)
         idx = len(self.ids)
-        self.index.add_item(idx, vector.tolist())
+        self.index.add_item(idx, vec_list)
         self.ids.append(id)
         self.metadata[id] = metadata
+        self._built = False
 
-    def upsert(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]):
+    def upsert(self, id: str, vector, metadata: Dict[str, Any]):
         if id in self.ids:
             self.delete(ids=[id])
         self.add(id, vector, metadata)
@@ -42,61 +46,79 @@ class AnnoyVectorStore(BaseVectorStore):
     def add_many(
         self,
         ids: List[str],
-        vectors: List[np.ndarray],
+        vectors: List,
         metadata: List[Dict[str, Any]]
     ):
-        for id_, vec_, meta_ in zip(ids, vectors, metadata):
-            self.add(id_, vec_, meta_)
+        for _id, vec, meta in zip(ids, vectors, metadata):
+            self.add(_id, vec, meta)
 
     def delete(self, ids: List[str] = None, filter: Dict[str, Any] = None):
         to_remove = set(ids or [])
         if filter:
-            for id_ in self.ids:
-                m = self.metadata.get(id_, {})
-                if all(m.get(k) == v for k, v in filter.items()):
-                    to_remove.add(id_)
+            for _id in list(self.ids):
+                md = self.metadata.get(_id, {})
+                if all(md.get(k) == v for k, v in filter.items()):
+                    to_remove.add(_id)
 
-        keep = [(i, id_) for i, id_ in enumerate(self.ids) if id_ not in to_remove]
-        keep_idxs, keep_ids = zip(*keep) if keep else ([], [])
+        # Determine items to keep
+        keep = [(i, _id) for i, _id in enumerate(self.ids) if _id not in to_remove]
+        if keep:
+            keep_idxs, keep_ids = zip(*keep)
+        else:
+            keep_idxs, keep_ids = [], []
+
+        # Retrieve kept vectors
         keep_vecs = [self.index.get_item_vector(i) for i in keep_idxs]
         keep_meta = {id_: self.metadata[id_] for id_ in keep_ids}
 
-        # rebuild index
-        self.index = AnnoyIndex(self.dim, self.index.metric)
-        for new_idx, vec in enumerate(keep_vecs):
-            self.index.add_item(new_idx, vec)
-        self.index.build(self.n_trees)
-
+        # Rebuild the Annoy index
+        self.index = AnnoyIndex(self.dim, self.metric)
+        for new_i, vec in enumerate(keep_vecs):
+            self.index.add_item(new_i, vec)
         self.ids = list(keep_ids)
         self.metadata = keep_meta
+        self._built = False
+
+    def _ensure_built(self):
+        if not self._built:
+            self.index.build(self.n_trees)
+            self._built = True
 
     def search(
         self,
-        vector: np.ndarray,
+        vector,
         k: int,
         filter: Dict[str, Any] = None
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
-        self.index.build(self.n_trees)
+        vec_list = self._validate_vector(vector)
+        if not self.ids:
+            return []
+
+        self._ensure_built()
+        fetch_k = min(len(self.ids), k * 2)
         candidates, distances = self.index.get_nns_by_vector(
-            vector.tolist(), n=k * 2, include_distances=True
+            vec_list, n=fetch_k, include_distances=True
         )
+
         results = []
         for idx, dist in zip(candidates, distances):
             if idx < 0 or idx >= len(self.ids):
                 continue
-            id_ = self.ids[idx]
-            meta = self.metadata[id_]
-            if filter and not all(meta.get(k) == v for k, v in filter.items()):
+            _id = self.ids[idx]
+            md = self.metadata[_id]
+            if filter and not all(md.get(k) == v for k, v in filter.items()):
                 continue
-            # Annoy’s “angular” distance: convert to similarity
-            score = 1 - dist if self.index.metric == 'angular' else float(dist)
-            results.append((id_, score, meta))
+            # Convert angular distance to cosine similarity
+            score = 1 - (dist * dist) / 2
+            results.append((_id, score, md))
             if len(results) == k:
                 break
+
         return results
 
     def save(self, path: str):
         os.makedirs(path, exist_ok=True)
+        self._ensure_built()
         idx_path = os.path.join(path, "index.ann")
         self.index.save(idx_path)
         with open(os.path.join(path, "store.pkl"), "wb") as f:
@@ -104,18 +126,20 @@ class AnnoyVectorStore(BaseVectorStore):
                 "ids": self.ids,
                 "metadata": self.metadata,
                 "dim": self.dim,
-                "n_trees": self.n_trees,
-                "metric": self.index.metric
+                "metric": self.metric,
+                "n_trees": self.n_trees
             }, f)
 
     def load(self, path: str):
-        idx_path = os.path.join(path, "index.ann")
         with open(os.path.join(path, "store.pkl"), "rb") as f:
             data = pickle.load(f)
         self.ids = data["ids"]
         self.metadata = data["metadata"]
         self.dim = data["dim"]
+        self.metric = data["metric"]
         self.n_trees = data["n_trees"]
-        metric = data["metric"]
-        self.index = AnnoyIndex(self.dim, metric)
+
+        idx_path = os.path.join(path, "index.ann")
+        self.index = AnnoyIndex(self.dim, self.metric)
         self.index.load(idx_path)
+        self._built = True
