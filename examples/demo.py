@@ -11,6 +11,9 @@ docs = {
     "doc4": "Neural networks are a kind of machine learning model.",
 }
 
+# Learn corpus vocabulary
+embedder.fit(list(docs.values()))
+
 
 for doc_id, text in docs.items():
     store.add(doc_id, embedder.encode(text)[0], {"text": text})
