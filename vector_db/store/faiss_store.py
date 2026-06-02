@@ -96,6 +96,8 @@ class FaissVectorStore(BaseVectorStore):
         os.makedirs(path, exist_ok=True)
         faiss.write_index(self.index, os.path.join(path, "index.faiss"))
         save_faiss_metadata(path, self.ids, self.metadata, self.dim)
+        if self.vectors:
+            np.save(os.path.join(path, "vectors.npy"), np.vstack(self.vectors))
 
     def load(self, path: str):
         self.index = faiss.read_index(os.path.join(path, "index.faiss"))
@@ -103,4 +105,9 @@ class FaissVectorStore(BaseVectorStore):
         self.ids = ids
         self.metadata = metadata
         self.dim = dim
-        self.vectors = [np.zeros(dim) for _ in self.ids]
+        vec_path = os.path.join(path, "vectors.npy")
+        if os.path.exists(vec_path):
+            vectors = np.load(vec_path)
+            self.vectors = [vec for vec in vectors]
+        else:
+            self.vectors = [np.zeros(dim) for _ in self.ids]
