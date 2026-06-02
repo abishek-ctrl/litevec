@@ -7,11 +7,7 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "numpy",
-    "faiss-cpu",
-    "sentence-transformers",
-    "hnswlib",
-    "annoy"
+    "numpy"
 ]
 
 [project.scripts]
