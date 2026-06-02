@@ -9,7 +9,9 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "faiss-cpu",
-    "sentence-transformers"
+    "sentence-transformers",
+    "hnswlib",
+    "annoy"
 ]
 
 [project.scripts]

@@ -3,3 +3,5 @@ faiss-cpu
 pymupdf
 scikit-learn
 sentence-transformers
+hnswlib
+annoy
