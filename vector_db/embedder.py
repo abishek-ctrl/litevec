@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 import numpy as np
 from functools import lru_cache
 
@@ -66,11 +66,14 @@ class Embedder:
             raise ValueError("Embedding dimension unknown until after first embed call")
         return self._dim
 
-    def encode(self, texts: List[str]) -> np.ndarray:
+    def encode(self, texts: Union[str, List[str]]) -> np.ndarray:
         """
-        Encode a list of texts into shape (len(texts), dim).
+        Encode a single text or a list of texts into shape (len(texts), dim).
         Caches single-string calls for speed.
         """
+        if isinstance(texts, str):
+            texts = [texts]
+
         if self.backend == "hf":
             if len(texts) == 1:
                 vec = np.array(self._embed_cache(texts[0]), dtype=np.float32)
