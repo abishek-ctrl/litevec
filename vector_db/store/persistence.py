@@ -1,7 +1,9 @@
+"""Serialization and deserialization helpers for LiteVec store states."""
+
 import os
 import json
-import numpy as np
 from typing import List, Tuple, Dict, Any
+import numpy as np
 
 def save_memory_store(
     path: str,
@@ -9,9 +11,22 @@ def save_memory_store(
     vectors: List[np.ndarray],
     metadata: Dict[str, Dict[str, Any]],
     dim: int
-):
+) -> None:
+    """Save memory store arrays and metadata dictionaries to path.
+
+    Args:
+        path: Output directory path.
+        ids: List of document IDs.
+        vectors: List of 1D numpy arrays.
+        metadata: Dictionary of metadata objects.
+        dim: Dimension of vectors.
+    """
     os.makedirs(path, exist_ok=True)
-    np.save(os.path.join(path, "vectors.npy"), np.vstack(vectors))
+    if vectors:
+        np.save(os.path.join(path, "vectors.npy"), np.vstack(vectors))
+    else:
+        np.save(os.path.join(path, "vectors.npy"), np.array([], dtype=np.float32))
+
     with open(os.path.join(path, "meta.json"), "w") as f:
         json.dump({
             "ids": ids,
@@ -22,20 +37,39 @@ def save_memory_store(
 def load_memory_store(
     path: str
 ) -> Tuple[List[str], List[np.ndarray], Dict[str, Dict[str, Any]], int]:
-    vectors = np.load(os.path.join(path, "vectors.npy"))
+    """Load memory store arrays and metadata from disk path.
+
+    Args:
+        path: Input directory path containing vectors.npy and meta.json.
+
+    Returns:
+        A tuple of (ids, list of vectors, metadata dictionary, dimensions).
+    """
     with open(os.path.join(path, "meta.json")) as f:
         meta = json.load(f)
     ids = meta["ids"]
     metadata = meta["metadata"]
     dim = meta["dim"]
-    return ids, [vec for vec in vectors], metadata, dim
+
+    vec_path = os.path.join(path, "vectors.npy")
+    if os.path.exists(vec_path):
+        arr = np.load(vec_path)
+        if arr.size > 0:
+            vectors = [arr[i] for i in range(arr.shape[0])]
+        else:
+            vectors = []
+    else:
+        vectors = [np.zeros(dim, dtype=np.float32) for _ in ids]
+
+    return ids, vectors, metadata, dim
 
 def save_faiss_metadata(
     path: str,
     ids: List[str],
     metadata: Dict[str, Dict[str, Any]],
     dim: int
-):
+) -> None:
+    """Save FAISS metadata schema directly to path."""
     with open(os.path.join(path, "meta.json"), "w") as f:
         json.dump({
             "ids": ids,
@@ -46,6 +80,7 @@ def save_faiss_metadata(
 def load_faiss_metadata(
     path: str
 ) -> Tuple[List[str], Dict[str, Dict[str, Any]], int]:
+    """Load FAISS metadata schema from path."""
     with open(os.path.join(path, "meta.json")) as f:
         meta = json.load(f)
     return meta["ids"], meta["metadata"], meta["dim"]

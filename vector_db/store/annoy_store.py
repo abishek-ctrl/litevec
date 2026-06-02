@@ -1,145 +1,260 @@
+"""Pure Python/NumPy implementation of a Random Projection Forest for Approximate Nearest Neighbor search."""
+
 import os
 import pickle
 import numpy as np
-from typing import List, Tuple, Dict, Any
-from annoy import AnnoyIndex
+from typing import List, Tuple, Dict, Any, Optional
+
 from vector_db.store.base import BaseVectorStore
+from vector_db.exceptions import DimensionMismatchError, DuplicateIDError
+from vector_db.filter import evaluate_filter
+from vector_db.metrics import (
+    cosine_similarity,
+    l2_distance,
+    inner_product
+)
+
+class RPTNode:
+    """A node in a Random Projection Tree."""
+
+    def __init__(self) -> None:
+        self.is_leaf: bool = False
+        self.indices: List[int] = []  # Leaf stores vector indices
+        self.v: Optional[np.ndarray] = None  # Normal vector of hyperplane
+        self.d: float = 0.0  # Median offset
+        self.left: Optional['RPTNode'] = None
+        self.right: Optional['RPTNode'] = None
+
 
 class AnnoyVectorStore(BaseVectorStore):
-    def __init__(self, dim: int, metric: str = 'angular', n_trees: int = 10):
+    """Random Projection Forest vector store replacing the external Spotify Annoy library.
+
+    Retains name 'AnnoyVectorStore' for backward compatibility.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        metric: str = "cosine",
+        n_trees: int = 10,
+        leaf_size: int = 32
+    ):
+        """Initialize the RP Forest vector store.
+
+        Args:
+            dim: Dimension of vectors.
+            metric: Distance metric: 'cosine', 'l2', or 'ip'.
+            n_trees: Number of projection trees in the forest.
+            leaf_size: Maximum number of vectors inside a leaf node.
+        """
         self.dim = dim
-        self.metric = metric
+        self.metric = metric.lower()
         self.n_trees = n_trees
-        self.index = AnnoyIndex(dim, metric)
+        self.leaf_size = leaf_size
         self.ids: List[str] = []
+        self.vectors: List[np.ndarray] = []
         self.metadata: Dict[str, Dict[str, Any]] = {}
+        self.trees: List[RPTNode] = []
         self._built = False
 
-    def _validate_vector(self, vector):
-        # Accept np.ndarray or list
-        if isinstance(vector, np.ndarray):
-            if vector.shape != (self.dim,):
-                raise ValueError(f"Expected vector shape ({self.dim},), got {vector.shape}")
-            return vector.tolist()
-        elif isinstance(vector, list):
-            if len(vector) != self.dim:
-                raise ValueError(f"Expected vector length {self.dim}, got {len(vector)}")
-            return vector
-        else:
-            raise TypeError("Vector must be a list or numpy.ndarray")
+        if self.metric not in ("cosine", "l2", "ip"):
+            raise ValueError(f"Unsupported metric: {metric}")
 
-    def add(self, id: str, vector, metadata: Dict[str, Any]):
-        if id in self.ids:
-            raise ValueError(f"ID '{id}' exists; use upsert() to overwrite.")
-        vec_list = self._validate_vector(vector)
-        idx = len(self.ids)
-        self.index.add_item(idx, vec_list)
+    def _validate_vector(self, vector: np.ndarray) -> np.ndarray:
+        vec = np.array(vector, dtype=np.float32)
+        if vec.shape != (self.dim,):
+            raise DimensionMismatchError(
+                f"Expected vector shape ({self.dim},), got {vec.shape}"
+            )
+        return vec
+
+    def add(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]) -> None:
+        """Add a single vector."""
+        if id in self.metadata:
+            raise DuplicateIDError(f"ID '{id}' already exists in store.")
+        vec = self._validate_vector(vector)
         self.ids.append(id)
+        self.vectors.append(vec)
         self.metadata[id] = metadata
         self._built = False
 
-    def upsert(self, id: str, vector, metadata: Dict[str, Any]):
-        if id in self.ids:
-            self.delete(ids=[id])
-        self.add(id, vector, metadata)
+    def upsert(self, id: str, vector: np.ndarray, metadata: Dict[str, Any]) -> None:
+        """Insert or update existing vector."""
+        vec = self._validate_vector(vector)
+        if id in self.metadata:
+            idx = self.ids.index(id)
+            self.vectors[idx] = vec
+            self.metadata[id] = metadata
+            self._built = False
+        else:
+            self.add(id, vec, metadata)
 
     def add_many(
         self,
         ids: List[str],
-        vectors: List,
+        vectors: List[np.ndarray],
         metadata: List[Dict[str, Any]]
-    ):
+    ) -> None:
+        """Insert multiple vectors."""
         for _id, vec, meta in zip(ids, vectors, metadata):
-            self.add(_id, vec, meta)
+            self.upsert(_id, vec, meta)
 
-    def delete(self, ids: List[str] = None, filter: Dict[str, Any] = None):
+    def delete(self, ids: Optional[List[str]] = None, filter: Optional[Dict[str, Any]] = None) -> None:
+        """Delete items by ID list or metadata filter."""
         to_remove = set(ids or [])
         if filter:
-            for _id in list(self.ids):
-                md = self.metadata.get(_id, {})
-                if all(md.get(k) == v for k, v in filter.items()):
+            for _id in self.ids:
+                if evaluate_filter(self.metadata[_id], filter):
                     to_remove.add(_id)
 
-        # Determine items to keep
-        keep = [(i, _id) for i, _id in enumerate(self.ids) if _id not in to_remove]
-        if keep:
-            keep_idxs, keep_ids = zip(*keep)
-        else:
-            keep_idxs, keep_ids = [], []
+        if not to_remove:
+            return
 
-        # Retrieve kept vectors
-        keep_vecs = [self.index.get_item_vector(i) for i in keep_idxs]
-        keep_meta = {id_: self.metadata[id_] for id_ in keep_ids}
-
-        # Rebuild the Annoy index
-        self.index = AnnoyIndex(self.dim, self.metric)
-        for new_i, vec in enumerate(keep_vecs):
-            self.index.add_item(new_i, vec)
-        self.ids = list(keep_ids)
-        self.metadata = keep_meta
+        keep_indices = [idx for idx, _id in enumerate(self.ids) if _id not in to_remove]
+        self.ids = [self.ids[idx] for idx in keep_indices]
+        self.vectors = [self.vectors[idx] for idx in keep_indices]
+        self.metadata = {k: v for k, v in self.metadata.items() if k not in to_remove}
+        self.trees = []
         self._built = False
 
-    def _ensure_built(self):
-        if not self._built:
-            self.index.build(self.n_trees)
+    def _build_tree(self, indices: List[int]) -> RPTNode:
+        """Recursively build a single Random Projection Tree."""
+        node = RPTNode()
+        if len(indices) <= self.leaf_size:
+            node.is_leaf = True
+            node.indices = indices
+            return node
+
+        # Extract vectors for these indices
+        subset = [self.vectors[i] for i in indices]
+
+        # Choose a random projection direction (hyperplane)
+        # Select two points randomly, normal is the line connecting them
+        idx1, idx2 = np.random.choice(len(indices), size=2, replace=False)
+        v = subset[idx1] - subset[idx2]
+        norm = np.linalg.norm(v)
+        if norm == 0:
+            # All points are identical
+            node.is_leaf = True
+            node.indices = indices
+            return node
+        v = v / norm
+
+        # Project points
+        projections = [float(np.dot(x, v)) for x in subset]
+        median_val = float(np.median(projections))
+
+        left_idx = []
+        right_idx = []
+        for i, proj in zip(indices, projections):
+            if proj <= median_val:
+                left_idx.append(i)
+            else:
+                right_idx.append(i)
+
+        # Fallback if partition failed to split
+        if not left_idx or not right_idx:
+            node.is_leaf = True
+            node.indices = indices
+            return node
+
+        node.v = v
+        node.d = median_val
+        node.left = self._build_tree(left_idx)
+        node.right = self._build_tree(right_idx)
+        return node
+
+    def _ensure_built(self) -> None:
+        """Ensure forest trees are populated if not already built."""
+        if not self._built and self.ids:
+            self.trees = []
+            indices = list(range(len(self.ids)))
+            for _ in range(self.n_trees):
+                self.trees.append(self._build_tree(indices))
             self._built = True
+
+    def _search_tree(self, node: RPTNode, query_vec: np.ndarray) -> List[int]:
+        """Traverse down a tree to collect candidate leaf indices."""
+        if node.is_leaf:
+            return node.indices
+        proj = float(np.dot(query_vec, node.v))
+        if proj <= node.d:
+            return self._search_tree(node.left, query_vec)
+        else:
+            return self._search_tree(node.right, query_vec)
 
     def search(
         self,
-        vector,
+        vector: np.ndarray,
         k: int,
-        filter: Dict[str, Any] = None
+        filter: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
-        vec_list = self._validate_vector(vector)
+        """Search approximately using the random projection forest."""
+        query_vec = self._validate_vector(vector)
         if not self.ids:
             return []
 
         self._ensure_built()
-        fetch_k = min(len(self.ids), k * 2)
-        candidates, distances = self.index.get_nns_by_vector(
-            vec_list, n=fetch_k, include_distances=True
-        )
 
+        # 1. Gather index candidates from all trees
+        candidates = set()
+        for tree in self.trees:
+            candidates.update(self._search_tree(tree, query_vec))
+
+        # 2. Score candidates
         results = []
-        for idx, dist in zip(candidates, distances):
-            if idx < 0 or idx >= len(self.ids):
+        for idx in candidates:
+            doc_id = self.ids[idx]
+            # Metadata pre-filtering
+            if filter and not evaluate_filter(self.metadata[doc_id], filter):
                 continue
-            _id = self.ids[idx]
-            md = self.metadata[_id]
-            if filter and not all(md.get(k) == v for k, v in filter.items()):
-                continue
-            # Convert angular distance to cosine similarity
-            score = 1 - (dist * dist) / 2
-            results.append((_id, score, md))
-            if len(results) == k:
-                break
+            
+            vec = self.vectors[idx]
+            if self.metric == "cosine":
+                score = cosine_similarity(query_vec, vec)
+            elif self.metric == "ip":
+                score = inner_product(query_vec, vec)
+            else:
+                score = l2_distance(query_vec, vec)
+            
+            results.append((doc_id, score, self.metadata[doc_id]))
 
-        return results
+        # 3. Sort results
+        if self.metric in ("cosine", "ip"):
+            # Higher score is closer
+            results.sort(key=lambda x: x[1], reverse=True)
+        else:
+            # Lower distance is closer
+            results.sort(key=lambda x: x[1])
 
-    def save(self, path: str):
+        return results[:k]
+
+    def save(self, path: str) -> None:
+        """Save state and forest structure."""
         os.makedirs(path, exist_ok=True)
         self._ensure_built()
-        idx_path = os.path.join(path, "index.ann")
-        self.index.save(idx_path)
         with open(os.path.join(path, "store.pkl"), "wb") as f:
             pickle.dump({
                 "ids": self.ids,
+                "vectors": self.vectors,
                 "metadata": self.metadata,
                 "dim": self.dim,
                 "metric": self.metric,
-                "n_trees": self.n_trees
+                "n_trees": self.n_trees,
+                "leaf_size": self.leaf_size,
+                "trees": self.trees
             }, f)
 
-    def load(self, path: str):
+    def load(self, path: str) -> None:
+        """Load state and forest structure."""
         with open(os.path.join(path, "store.pkl"), "rb") as f:
             data = pickle.load(f)
         self.ids = data["ids"]
+        self.vectors = data["vectors"]
         self.metadata = data["metadata"]
         self.dim = data["dim"]
         self.metric = data["metric"]
         self.n_trees = data["n_trees"]
-
-        idx_path = os.path.join(path, "index.ann")
-        self.index = AnnoyIndex(self.dim, self.metric)
-        self.index.load(idx_path)
+        self.leaf_size = data["leaf_size"]
+        self.trees = data["trees"]
         self._built = True
